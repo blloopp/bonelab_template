@@ -1,157 +1,260 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using BoneLib;
-using BoneLib.BoneMenu;
-using Il2CppSLZ.Marrow.Pool;
-using Il2CppSLZ.Marrow.Warehouse;
+using Il2CppSLZ.Marrow;
+using LabFusion.Entities;
+using LabFusion.Network;
+using LabFusion.Player;
 using MelonLoader;
 using UnityEngine;
+using UnityEngine.UI;
 
-[assembly: MelonInfo(typeof(QuickSpawnerMod.Main), "QuickSpawner", "1.0.0", "YourName")]
+[assembly: MelonInfo(typeof(FusionWristTP.Main), "FusionWristTP", "1.0.0", "VibeCoder")]
 [assembly: MelonGame("Stress Level Zero", "BONELAB")]
 
-namespace QuickSpawnerMod
+namespace FusionWristTP
 {
     public class Main : MelonMod
     {
-        private static Page _mainPage;
-        private static Page _listPage;
-        private static List<SpawnableCrate> _allCrates = new List<SpawnableCrate>();
-        private static List<SpawnableCrate> _filteredCrates = new List<SpawnableCrate>();
-        private static int _currentPage = 0;
-        private const int ItemsPerPage = 8;
+        private static GameObject _menuRoot;
+        private static Transform _buttonContainer;
+        private static bool _isMenuOpen = false;
+        private static float _lastTapTime = 0f;
+        private static bool _wasTouchingWrist = false;
 
-        public override void OnInitializeMelon()
+        // Colors for your Purple & Black theme
+        private static readonly Color DarkBlack = new Color(0.06f, 0.06f, 0.08f, 0.95f);
+        private static readonly Color NeonPurple = new Color(0.55f, 0.15f, 0.95f, 1f);
+        private static readonly Color ButtonPurple = new Color(0.22f, 0.08f, 0.38f, 0.95f);
+
+        public override void OnUpdate()
         {
-            // Create the main BoneMenu page
-            _mainPage = Page.Root.CreatePage("Quick Spawner", Color.cyan);
+            if (Player.RigManager == null || Player.RightHand == null || Player.LeftHand == null)
+                return;
 
-            // Search bar using BoneLib's built-in VR keyboard
-            _mainPage.CreateString("Search Item", Color.yellow, "", (searchText) =>
+            // 1. Keep the wrist anchor attached to your right wrist
+            if (_menuRoot == null)
             {
-                FilterCrates(searchText);
-            });
+                BuildWristMenu();
+            }
 
-            _mainPage.CreateFunction("Refresh & Show All", Color.green, () =>
+            Transform rightWrist = Player.RightHand.transform;
+            _menuRoot.transform.position = rightWrist.position + (rightWrist.up * 0.08f) + (rightWrist.forward * -0.04f);
+            _menuRoot.transform.rotation = rightWrist.rotation * Quaternion.Euler(45f, 180f, 0f);
+
+            // 2. Detect double-tap on your right wrist with your left index finger/hand
+            float distToWrist = Vector3.Distance(Player.LeftHand.transform.position, rightWrist.position);
+            bool isTouchingNow = distToWrist < 0.085f;
+
+            if (isTouchingNow && !_wasTouchingWrist)
             {
-                LoadAllCrates();
-                FilterCrates("");
-            });
-
-            _listPage = _mainPage.CreatePage("Browse Items", Color.white);
-        }
-
-        private static void LoadAllCrates()
-        {
-            _allCrates.Clear();
-
-            if (AssetWarehouse.Instance == null) return;
-
-            // Grab every spawnable crate from base game and installed mods
-            foreach (var crate in AssetWarehouse.Instance.GetCrates())
-            {
-                var spawnable = crate.TryCast<SpawnableCrate>();
-                if (spawnable != null && !string.IsNullOrEmpty(spawnable.Title))
+                float timeSinceLastTap = Time.time - _lastTapTime;
+                if (timeSinceLastTap > 0.08f && timeSinceLastTap < 0.45f)
                 {
-                    _allCrates.Add(spawnable);
+                    ToggleMenu();
+                    _lastTapTime = 0f;
+                }
+                else
+                {
+                    _lastTapTime = Time.time;
                 }
             }
+            _wasTouchingWrist = isTouchingNow;
 
-            _allCrates = _allCrates.OrderBy(c => c.Title).ToList();
+            // 3. Detect left index finger poking a player button while menu is open
+            if (_isMenuOpen && _buttonContainer != null)
+            {
+                CheckButtonPoke(Player.LeftHand.transform.position);
+            }
         }
 
-        private static void FilterCrates(string query)
+        private static void ToggleMenu()
         {
-            if (_allCrates.Count == 0)
-            {
-                LoadAllCrates();
-            }
+            _isMenuOpen = !_isMenuOpen;
+            _menuRoot.SetActive(_isMenuOpen);
 
-            if (string.IsNullOrWhiteSpace(query))
+            if (_isMenuOpen)
             {
-                _filteredCrates = new List<SpawnableCrate>(_allCrates);
+                RefreshPlayerList();
             }
-            else
-            {
-                string lowerQuery = query.ToLower();
-                _filteredCrates = _allCrates
-                    .Where(c => c.Title.ToLower().Contains(lowerQuery) || 
-                                c.Barcode.ID.ToLower().Contains(lowerQuery))
-                    .ToList();
-            }
-
-            _currentPage = 0;
-            RebuildListPage();
         }
 
-        private static void RebuildListPage()
+        private static void BuildWristMenu()
         {
-            _listPage.RemoveAll();
+            _menuRoot = new GameObject("FusionWristTP_Menu");
+            GameObject.DontDestroyOnLoad(_menuRoot);
 
-            if (_filteredCrates.Count == 0)
+            // Main Canvas floating just above the right wrist
+            Canvas canvas = _menuRoot.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+
+            RectTransform rootRect = _menuRoot.GetComponent<RectTransform>();
+            rootRect.sizeDelta = new Vector2(260f, 340f);
+            _menuRoot.transform.localScale = Vector3.one * 0.00075f;
+
+            // Black Background Panel
+            Image bg = _menuRoot.AddComponent<Image>();
+            bg.color = DarkBlack;
+
+            // Purple Border Outline
+            Outline border = _menuRoot.AddComponent<Outline>();
+            border.effectColor = NeonPurple;
+            border.effectDistance = new Vector2(5f, 5f);
+
+            // Header Bar
+            GameObject headerObj = new GameObject("Header");
+            headerObj.transform.SetParent(_menuRoot.transform, false);
+            Image headerImg = headerObj.AddComponent<Image>();
+            headerImg.color = NeonPurple;
+
+            RectTransform headerRect = headerObj.GetComponent<RectTransform>();
+            headerRect.anchorMin = new Vector2(0f, 0.88f);
+            headerRect.anchorMax = new Vector2(1f, 1f);
+            headerRect.offsetMin = Vector2.zero;
+            headerRect.offsetMax = Vector2.zero;
+
+            CreateText(headerObj.transform, "FUSION TELEPORT", 20, Color.white);
+
+            // Player List Container
+            GameObject listObj = new GameObject("PlayerList");
+            listObj.transform.SetParent(_menuRoot.transform, false);
+            _buttonContainer = listObj.transform;
+
+            RectTransform listRect = listObj.GetComponent<RectTransform>();
+            listRect.anchorMin = new Vector2(0.05f, 0.04f);
+            listRect.anchorMax = new Vector2(0.95f, 0.85f);
+            listRect.offsetMin = Vector2.zero;
+            listRect.offsetMax = Vector2.zero;
+
+            VerticalLayoutGroup layout = listObj.AddComponent<VerticalLayoutGroup>();
+            layout.spacing = 8f;
+            layout.childControlHeight = false;
+            layout.childControlWidth = true;
+            layout.childForceExpandHeight = false;
+            layout.childForceExpandWidth = true;
+
+            _menuRoot.SetActive(false);
+        }
+
+        private static void RefreshPlayerList()
+        {
+            if (_buttonContainer == null) return;
+
+            for (int i = _buttonContainer.childCount - 1; i >= 0; i--)
             {
-                _listPage.CreateFunction("No items found. Hit Refresh!", Color.red, () => { });
+                GameObject.Destroy(_buttonContainer.GetChild(i).gameObject);
+            }
+
+            if (!NetworkInfo.HasServer)
+            {
+                CreatePlayerButton("Not in a Fusion Server", null);
                 return;
             }
 
-            int totalPages = Mathf.CeilToInt((float)_filteredCrates.Count / ItemsPerPage);
-            _listPage.CreateFunction($"Page {_currentPage + 1} of {totalPages} ({_filteredCrates.Count} items)", Color.gray, () => { });
-
-            // Navigation buttons
-            if (_currentPage > 0)
+            int count = 0;
+            foreach (var playerId in PlayerIdManager.PlayerIds)
             {
-                _listPage.CreateFunction("< Previous Page", Color.yellow, () =>
-                {
-                    _currentPage--;
-                    RebuildListPage();
-                });
+                // Skip yourself
+                if (playerId == PlayerIdManager.LocalId) continue;
+
+                string displayName = playerId.Metadata.Nickname.GetValue();
+                if (string.IsNullOrWhiteSpace(displayName))
+                    displayName = $"Player {playerId.SmallId}";
+
+                PlayerId targetId = playerId;
+                CreatePlayerButton(displayName, targetId);
+                count++;
             }
 
-            if ((_currentPage + 1) * ItemsPerPage < _filteredCrates.Count)
+            if (count == 0)
             {
-                _listPage.CreateFunction("Next Page >", Color.yellow, () =>
-                {
-                    _currentPage++;
-                    RebuildListPage();
-                });
-            }
-
-            // Display items for the current page
-            var pageItems = _filteredCrates
-                .Skip(_currentPage * ItemsPerPage)
-                .Take(ItemsPerPage);
-
-            foreach (var crate in pageItems)
-            {
-                SpawnableCrate targetCrate = crate;
-                _listPage.CreateFunction(targetCrate.Title, Color.white, () =>
-                {
-                    SpawnInFrontOfPlayer(targetCrate);
-                });
+                CreatePlayerButton("No other players in lobby", null);
             }
         }
 
-        private static void SpawnInFrontOfPlayer(SpawnableCrate crate)
+        private static void CreatePlayerButton(string label, PlayerId targetPlayer)
         {
-            if (Player.Head == null) return;
+            GameObject btnObj = new GameObject("PlayerBtn_" + label);
+            btnObj.transform.SetParent(_buttonContainer, false);
 
-            // Spawn 1.5 meters in front of where you are looking
-            Vector3 forward = Player.Head.forward;
-            forward.y = 0;
-            forward.Normalize();
+            RectTransform rect = btnObj.AddComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(220f, 36f);
 
-            Vector3 spawnPos = Player.Head.position + (forward * 1.5f);
-            Quaternion spawnRot = Quaternion.LookRotation(-forward);
+            Image img = btnObj.AddComponent<Image>();
+            img.color = targetPlayer != null ? ButtonPurple : new Color(0.15f, 0.15f, 0.15f, 0.8f);
 
-            // Uses BONELAB's native AssetSpawner, which LabFusion automatically intercepts and syncs
-            var spawnable = new Il2CppSLZ.Marrow.Data.Spawnable()
+            Outline btnOutline = btnObj.AddComponent<Outline>();
+            btnOutline.effectColor = NeonPurple;
+            btnOutline.effectDistance = new Vector2(2f, 2f);
+
+            CreateText(btnObj.transform, label, 16, Color.white);
+
+            // Store target PlayerId on a helper tag component
+            if (targetPlayer != null)
             {
-                crateRef = new SpawnableCrateReference(crate.Barcode)
-            };
-
-            AssetSpawner.Register(spawnable);
-            AssetSpawner.Spawn(spawnable, spawnPos, spawnRot, new Il2CppSystem.Nullable<Vector3>(), null, false, new Il2CppSystem.Nullable<int>(), null, null);
+                var tag = btnObj.AddComponent<TeleportTargetTag>();
+                tag.TargetId = targetPlayer;
+            }
         }
+
+        private static void CheckButtonPoke(Vector3 leftHandPos)
+        {
+            for (int i = 0; i < _buttonContainer.childCount; i++)
+            {
+                Transform child = _buttonContainer.GetChild(i);
+                var tag = child.GetComponent<TeleportTargetTag>();
+                if (tag == null || tag.TargetId == null) continue;
+
+                float dist = Vector3.Distance(leftHandPos, child.position);
+                if (dist < 0.032f && Time.time - tag.LastClickTime > 0.6f)
+                {
+                    tag.LastClickTime = Time.time;
+                    TeleportToFusionPlayer(tag.TargetId);
+                }
+            }
+        }
+
+        private static void TeleportToFusionPlayer(PlayerId targetId)
+        {
+            if (NetworkPlayerManager.TryGetPlayer(targetId, out NetworkPlayer netPlayer))
+            {
+                if (netPlayer.HasRig && netPlayer.RigRefs.RigManager != null)
+                {
+                    Transform targetChest = netPlayer.RigRefs.RigManager.physicsRig.m_chest;
+                    Vector3 targetPos = targetChest.position + (targetChest.forward * -0.8f);
+
+                    // Teleport your RigManager right behind/next to them
+                    Player.RigManager.Teleport(targetPos, true);
+                    ToggleMenu(); // Close wrist menu after teleporting
+                }
+            }
+        }
+
+        private static void CreateText(Transform parent, string content, int fontSize, Color color)
+        {
+            GameObject textObj = new GameObject("Label");
+            textObj.transform.SetParent(parent, false);
+
+            RectTransform rect = textObj.AddComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(8f, 0f);
+            rect.offsetMax = new Vector2(-8f, 0f);
+
+            Text txt = textObj.AddComponent<Text>();
+            txt.text = content;
+            txt.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            txt.fontSize = fontSize;
+            txt.alignment = TextAnchor.MiddleCenter;
+            txt.color = color;
+        }
+    }
+
+    [RegisterTypeInIl2Cpp]
+    public class TeleportTargetTag : MonoBehaviour
+    {
+        public TeleportTargetTag(IntPtr ptr) : base(ptr) { }
+        public PlayerId TargetId;
+        public float LastClickTime;
     }
 }
