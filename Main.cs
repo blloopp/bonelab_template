@@ -5,6 +5,7 @@ using Il2CppSLZ.Marrow;
 using LabFusion.Entities;
 using LabFusion.Network;
 using LabFusion.Player;
+using LabFusion.Representation;
 using MelonLoader;
 using UnityEngine;
 using UnityEngine.UI;
@@ -42,7 +43,7 @@ namespace FusionWristTP
             _menuRoot.transform.position = rightWrist.position + (rightWrist.up * 0.08f) + (rightWrist.forward * -0.04f);
             _menuRoot.transform.rotation = rightWrist.rotation * Quaternion.Euler(45f, 180f, 0f);
 
-            // 2. Detect double-tap on your right wrist with your left index finger/hand
+            // 2. Detect double-tap on your right wrist with your left hand
             float distToWrist = Vector3.Distance(Player.LeftHand.transform.position, rightWrist.position);
             bool isTouchingNow = distToWrist < 0.085f;
 
@@ -61,7 +62,7 @@ namespace FusionWristTP
             }
             _wasTouchingWrist = isTouchingNow;
 
-            // 3. Detect left index finger poking a player button while menu is open
+            // 3. Detect left hand poking a player button while menu is open
             if (_isMenuOpen && _buttonContainer != null)
             {
                 CheckButtonPoke(Player.LeftHand.transform.position);
@@ -84,7 +85,6 @@ namespace FusionWristTP
             _menuRoot = new GameObject("FusionWristTP_Menu");
             GameObject.DontDestroyOnLoad(_menuRoot);
 
-            // Main Canvas floating just above the right wrist
             Canvas canvas = _menuRoot.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
 
@@ -92,11 +92,9 @@ namespace FusionWristTP
             rootRect.sizeDelta = new Vector2(260f, 340f);
             _menuRoot.transform.localScale = Vector3.one * 0.00075f;
 
-            // Black Background Panel
             Image bg = _menuRoot.AddComponent<Image>();
             bg.color = DarkBlack;
 
-            // Purple Border Outline
             Outline border = _menuRoot.AddComponent<Outline>();
             border.effectColor = NeonPurple;
             border.effectDistance = new Vector2(5f, 5f);
@@ -147,7 +145,7 @@ namespace FusionWristTP
 
             if (!NetworkInfo.HasServer)
             {
-                CreatePlayerButton("Not in a Fusion Server", null);
+                CreatePlayerButton("Not in a Fusion Server", 255);
                 return;
             }
 
@@ -161,18 +159,17 @@ namespace FusionWristTP
                 if (string.IsNullOrWhiteSpace(displayName))
                     displayName = $"Player {playerId.SmallId}";
 
-                PlayerId targetId = playerId;
-                CreatePlayerButton(displayName, targetId);
+                CreatePlayerButton(displayName, playerId.SmallId);
                 count++;
             }
 
             if (count == 0)
             {
-                CreatePlayerButton("No other players in lobby", null);
+                CreatePlayerButton("No other players in lobby", 255);
             }
         }
 
-        private static void CreatePlayerButton(string label, PlayerId targetPlayer)
+        private static void CreatePlayerButton(string label, byte targetSmallId)
         {
             GameObject btnObj = new GameObject("PlayerBtn_" + label);
             btnObj.transform.SetParent(_buttonContainer, false);
@@ -181,7 +178,7 @@ namespace FusionWristTP
             rect.sizeDelta = new Vector2(220f, 36f);
 
             Image img = btnObj.AddComponent<Image>();
-            img.color = targetPlayer != null ? ButtonPurple : new Color(0.15f, 0.15f, 0.15f, 0.8f);
+            img.color = targetSmallId != 255 ? ButtonPurple : new Color(0.15f, 0.15f, 0.15f, 0.8f);
 
             Outline btnOutline = btnObj.AddComponent<Outline>();
             btnOutline.effectColor = NeonPurple;
@@ -189,11 +186,10 @@ namespace FusionWristTP
 
             CreateText(btnObj.transform, label, 16, Color.white);
 
-            // Store target PlayerId on a helper tag component
-            if (targetPlayer != null)
+            if (targetSmallId != 255)
             {
                 var tag = btnObj.AddComponent<TeleportTargetTag>();
-                tag.TargetId = targetPlayer;
+                tag.TargetSmallId = targetSmallId;
             }
         }
 
@@ -203,29 +199,28 @@ namespace FusionWristTP
             {
                 Transform child = _buttonContainer.GetChild(i);
                 var tag = child.GetComponent<TeleportTargetTag>();
-                if (tag == null || tag.TargetId == null) continue;
+                if (tag == null || tag.TargetSmallId == 255) continue;
 
                 float dist = Vector3.Distance(leftHandPos, child.position);
                 if (dist < 0.032f && Time.time - tag.LastClickTime > 0.6f)
                 {
                     tag.LastClickTime = Time.time;
-                    TeleportToFusionPlayer(tag.TargetId);
+                    TeleportToFusionPlayer(tag.TargetSmallId);
                 }
             }
         }
 
-        private static void TeleportToFusionPlayer(PlayerId targetId)
+        private static void TeleportToFusionPlayer(byte targetSmallId)
         {
-            if (NetworkPlayerManager.TryGetPlayer(targetId, out NetworkPlayer netPlayer))
+            if (NetworkPlayerManager.TryGetPlayer(targetSmallId, out NetworkPlayer netPlayer))
             {
                 if (netPlayer.HasRig && netPlayer.RigRefs.RigManager != null)
                 {
                     Transform targetChest = netPlayer.RigRefs.RigManager.physicsRig.m_chest;
                     Vector3 targetPos = targetChest.position + (targetChest.forward * -0.8f);
 
-                    // Teleport your RigManager right behind/next to them
                     Player.RigManager.Teleport(targetPos, true);
-                    ToggleMenu(); // Close wrist menu after teleporting
+                    ToggleMenu();
                 }
             }
         }
@@ -254,7 +249,7 @@ namespace FusionWristTP
     public class TeleportTargetTag : MonoBehaviour
     {
         public TeleportTargetTag(IntPtr ptr) : base(ptr) { }
-        public PlayerId TargetId;
+        public byte TargetSmallId;
         public float LastClickTime;
     }
 }
