@@ -150,16 +150,16 @@ namespace FusionWristTP
             }
 
             int count = 0;
-            foreach (var playerId in PlayerIdManager.PlayerIds)
+            foreach (var playerId in PlayerIDManager.PlayerIDs)
             {
                 // Skip yourself
-                if (playerId == PlayerIdManager.LocalId) continue;
+                if (playerId == PlayerIDManager.LocalID) continue;
 
                 string displayName = playerId.Metadata.Nickname.GetValue();
                 if (string.IsNullOrWhiteSpace(displayName))
-                    displayName = $"Player {playerId.SmallId}";
+                    displayName = $"Player {playerId.SmallID}";
 
-                CreatePlayerButton(displayName, playerId.SmallId);
+                CreatePlayerButton(displayName, playerId.SmallID);
                 count++;
             }
 
